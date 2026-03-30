@@ -22,11 +22,7 @@ jobs:
           pip install pyinstaller
 
       - name: Build .app with PyInstaller
-        run: |
-          pyinstaller --windowed \
-            --name "Unified-Measurement-Tool" \
-            --clean \
-            main_app.py
+        run: pyinstaller --clean build_app.spec
 
       - name: Create DMG
         run: |
@@ -66,11 +62,7 @@ jobs:
           pyinstaller --onefile --windowed \
             --name "Unified-Measurement-Tool" \
             --clean \
-            main_app.py
-
-      - name: Rename artifact
-        shell: bash
-        run: |
+            mpyinstaller --clean build_windows.spec
           VERSION="${GITHUB_REF_NAME#v}"
           mv dist/Unified-Measurement-Tool.exe "dist/Unified-Measurement-Tool-${VERSION}-Windows.exe"
           echo "EXE_NAME=Unified-Measurement-Tool-${VERSION}-Windows.exe" >> "$GITHUB_ENV"
