@@ -1,98 +1,120 @@
-name: Build Release
+name: Build and Release
 
 on:
   push:
     tags:
-      - "v*.*.*"
-  workflow_dispatch:
-
-permissions:
-  contents: write
+      - 'v*.*.*'
 
 jobs:
-  build:
-    name: Build ${{ matrix.os_name }} package
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: windows-latest
-            os_name: Windows
-            artifact_suffix: Windows
-            pyinstaller_args: --onefile --windowed
-            asset_extension: exe
-          - runner: macos-latest
-            os_name: macOS
-            artifact_suffix: macOS
-            pyinstaller_args: --windowed
-            asset_extension: dmg
-
+  build-macos:
+    runs-on: macos-latest
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: '3.11'
 
       - name: Install dependencies
-        shell: bash
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Resolve release version
-        id: version
-        shell: bash
+      - name: Build .app with PyInstaller
         run: |
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            VERSION="${GITHUB_REF_NAME#v}"
-          else
-            VERSION=$(python - <<'PY'
-from version import __version__
-print(__version__)
-PY
-)
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Build application with PyInstaller
-        shell: bash
-        run: |
-          pyinstaller ${{ matrix.pyinstaller_args }} \
+          pyinstaller --windowed \
             --name "Unified-Measurement-Tool" \
             --clean \
             main_app.py
 
-      - name: Package Windows executable
-        if: runner.os == 'Windows'
-        shell: pwsh
+      - name: Create DMG
         run: |
-          $version = "${{ steps.version.outputs.version }}"
-          $asset = "Unified-Measurement-Tool-$version-Windows.exe"
-          Copy-Item "dist/Unified-Measurement-Tool.exe" $asset
+          VERSION="${GITHUB_REF_NAME#v}"
+          DMG="dist/Unified-Measurement-Tool-${VERSION}-macOS.dmg"
+          hdiutil create \
+            -volname "Unified Measurement Tool" \
+            -srcfolder "dist/Unified-Measurement-Tool.app" \
+            -ov -format UDZO \
+            "$DMG"
+          echo "DMG_PATH=$DMG" >> "$GITHUB_ENV"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
-      - name: Package macOS application
-        if: runner.os == 'macOS'
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: ${{ env.DMG_PATH }}
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build .exe with PyInstaller
+        run: |
+          pyinstaller --onefile --windowed \
+            --name "Unified-Measurement-Tool" \
+            --clean \
+            main_app.py
+
+      - name: Rename artifact
         shell: bash
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          APP_NAME="Unified-Measurement-Tool.app"
-          DMG_NAME="Unified-Measurement-Tool-${VERSION}-macOS.dmg"
-          mkdir -p dmg-root
-          cp -R "dist/${APP_NAME}" dmg-root/
-          ln -s /Applications dmg-root/Applications
-          hdiutil create -volname "Unified Measurement Tool" \
-            -srcfolder dmg-root \
-            -ov -format UDZO \
-            "$DMG_NAME"
+          VERSION="${GITHUB_REF_NAME#v}"
+          mv dist/Unified-Measurement-Tool.exe "dist/Unified-Measurement-Tool-${VERSION}-Windows.exe"
+          echo "EXE_NAME=Unified-Measurement-Tool-${VERSION}-Windows.exe" >> "$GITHUB_ENV"
 
-      - name: Upload release asset
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe
+          path: dist/${{ env.EXE_NAME }}
+
+  release:
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-dmg
+          path: artifacts/
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-exe
+          path: artifacts/
+
+      - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            Unified-Measurement-Tool-${{ steps.version.outputs.version }}-${{ matrix.artifact_suffix }}.${{ matrix.asset_extension }}
+          name: "Unified Measurement Tool ${{ github.ref_name }}"
+          body: |
+            ## Unified Measurement Tool ${{ github.ref_name }}
+
+            ### Downloads
+            | Platform | File |
+            |----------|------|
+            | macOS    | `.dmg` — open and move the app as needed |
+            | Windows  | `.exe` — run directly |
+
+            ### Update notes
+            The application can check for updates automatically on startup and will prefer the correct installer for the current operating system.
+          files: artifacts/*
+          draft: false
+          prerelease: false
