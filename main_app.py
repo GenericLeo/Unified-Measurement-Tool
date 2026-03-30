@@ -4,6 +4,7 @@ Combines vertical and horizontal measurement capabilities with customizable colo
 """
 
 import os
+import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, colorchooser, ttk
 from typing import Dict, List, Optional, Tuple
@@ -38,6 +39,8 @@ from measurement_engine import (
     write_interface_distances_csv,
     write_interface_distances_excel,
 )
+from update_manager import UpdateManager
+from version import __version__
 
 # ── Palette ───────────────────────────────────────────────────────────────────
 ACCENT      = "#CC0000"   # NCSU red
@@ -83,6 +86,8 @@ class UnifiedMeasurementApp:
         self.ellipsoidal_processed_rows: List[Dict[str, object]] = []
         self.ellipsoidal_interface_rows: List[Dict[str, object]] = []
         self.ellipsoidal_last_preview_refs: List[ImageTk.PhotoImage] = []
+        self.update_manager = UpdateManager()
+        self.startup_update_check_started = False
 
         self._configure_styles()
         self._build_header()
@@ -92,6 +97,7 @@ class UnifiedMeasurementApp:
         self.root.bind_all("<MouseWheel>", self._on_mousewheel)
         self.root.bind_all("<Button-4>",   self._on_mousewheel)  # Linux scroll up
         self.root.bind_all("<Button-5>",   self._on_mousewheel)  # Linux scroll down
+        self.root.after(1200, self._auto_check_for_updates)
 
     def _bind_button_hover(self, button: tk.Button) -> None:
         """Give tk.Button a consistent light-blue hover state with stable text color."""
@@ -173,6 +179,16 @@ class UnifiedMeasurementApp:
                           cursor="hand2")
         choose_folder_btn.pack(side=tk.LEFT, padx=(0, 14))
         self._bind_button_hover(choose_folder_btn)
+
+        update_btn = tk.Button(right, text=f"Check for Updates ({__version__})",
+                  command=self.check_for_updates,
+                  bg=BTN_BG, fg=BTN_TEXT,
+                  activebackground=BTN_HOVER, activeforeground=BTN_TEXT,
+                  font=("Arial", 10, "bold"),
+                  relief=tk.FLAT, padx=12, pady=5,
+                  cursor="hand2")
+        update_btn.pack(side=tk.LEFT, padx=(0, 14))
+        self._bind_button_hover(update_btn)
 
         info = tk.Frame(right, bg=HEADER_BG)
         info.pack(side=tk.LEFT)
@@ -1209,6 +1225,101 @@ class UnifiedMeasurementApp:
         self.stats_text.delete("1.0", tk.END)
         self.stats_text.insert(tk.END, text)
         self.stats_text.config(state=tk.DISABLED)
+
+    def check_for_updates(self) -> None:
+        """Check GitHub releases and offer to open the latest download."""
+        self.root.config(cursor="watch")
+        self.root.update_idletasks()
+        try:
+            result = self.update_manager.check_for_updates()
+        finally:
+            self.root.config(cursor="")
+
+        error = result.get("error")
+        if error:
+            messagebox.showerror("Update Check Failed", str(error))
+            return
+
+        if result.get("update_available"):
+            latest_version = result.get("latest_version")
+            current_version = result.get("current_version")
+            platform_name = result.get("platform")
+            download_name = result.get("download_name")
+            release_notes = str(result.get("release_notes") or "No release notes available.")
+            if len(release_notes) > 1200:
+                release_notes = f"{release_notes[:1200]}\n\n..."
+            installer_line = ""
+            if isinstance(download_name, str) and download_name:
+                installer_line = f"Installer for {platform_name}: {download_name}\n\n"
+            should_open = messagebox.askyesno(
+                "Update Available",
+                f"Current version: {current_version}\n"
+                f"Latest version: {latest_version}\n\n"
+                f"{installer_line}"
+                f"Release notes:\n{release_notes}\n\n"
+                "Open the download page now?",
+            )
+            if should_open:
+                download_url = result.get("download_url")
+                html_url = result.get("html_url")
+                target_url = download_url if isinstance(download_url, str) else None
+                if target_url is None and isinstance(html_url, str):
+                    target_url = html_url
+                self.update_manager.open_download_page(target_url)
+            return
+
+        messagebox.showinfo(
+            "No Updates Available",
+            f"You are running the latest version ({result.get('current_version')}).",
+        )
+
+    def _auto_check_for_updates(self) -> None:
+        """Start a silent, non-blocking update check after the UI has loaded."""
+        if self.startup_update_check_started:
+            return
+        self.startup_update_check_started = True
+
+        worker = threading.Thread(target=self._run_startup_update_check, daemon=True)
+        worker.start()
+
+    def _run_startup_update_check(self) -> None:
+        """Perform the startup update request off the Tkinter UI thread."""
+        result = self.update_manager.check_for_updates()
+        self.root.after(0, lambda: self._handle_startup_update_result(result))
+
+    def _handle_startup_update_result(self, result: Dict[str, object]) -> None:
+        """Show an update prompt only when a newer release is available."""
+        if result.get("error"):
+            return
+        if not result.get("update_available"):
+            return
+
+        latest_version = result.get("latest_version")
+        current_version = result.get("current_version")
+        platform_name = result.get("platform")
+        download_name = result.get("download_name")
+        release_notes = str(result.get("release_notes") or "No release notes available.")
+        if len(release_notes) > 1200:
+            release_notes = f"{release_notes[:1200]}\n\n..."
+        installer_line = ""
+        if isinstance(download_name, str) and download_name:
+            installer_line = f"Installer for {platform_name}: {download_name}\n\n"
+
+        should_open = messagebox.askyesno(
+            "Update Available",
+            f"Current version: {current_version}\n"
+            f"Latest version: {latest_version}\n\n"
+            f"{installer_line}"
+            f"Release notes:\n{release_notes}\n\n"
+            "Open the download page now?",
+        )
+        if should_open:
+            download_url = result.get("download_url")
+            html_url = result.get("html_url")
+            target_url = download_url if isinstance(download_url, str) else None
+            if target_url is None and isinstance(html_url, str):
+                target_url = html_url
+            self.update_manager.open_download_page(target_url)
 
     # ── Scroll helpers ────────────────────────────────────────────────────────
     def _on_preview_configure(self, event) -> None:

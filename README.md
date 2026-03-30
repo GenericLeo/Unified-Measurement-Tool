@@ -68,6 +68,35 @@ Or use the provided launcher script:
 ./run_app.sh
 ```
 
+## Releases
+
+This repository includes a GitHub Actions release workflow that builds platform-specific installers for:
+- Windows: `.exe`
+- macOS: `.dmg`
+
+### How to Publish a Release
+
+1. Update [version.py](version.py) with the version you want to release.
+2. Commit and push your changes to `main`.
+3. Create and push a matching tag:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+4. GitHub Actions will automatically:
+   - build the Windows executable
+   - build the macOS application and package it as a DMG
+   - upload both assets to the GitHub release for that tag
+
+### Expected Release Asset Names
+
+- `Unified-Measurement-Tool-0.1.0-Windows.exe`
+- `Unified-Measurement-Tool-0.1.0-macOS.dmg`
+
+These names match the updater logic used by the app.
+
 ### Workflow
 
 1. **Choose Image Folder**: Click the button to select a folder containing your images
