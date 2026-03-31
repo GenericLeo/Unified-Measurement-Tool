@@ -58,11 +58,11 @@ jobs:
           pip install pyinstaller
 
       - name: Build .exe with PyInstaller
+        run: pyinstaller --clean build_windows.spec
+
+      - name: Rename artifact
+        shell: bash
         run: |
-          pyinstaller --onefile --windowed \
-            --name "Unified-Measurement-Tool" \
-            --clean \
-            mpyinstaller --clean build_windows.spec
           VERSION="${GITHUB_REF_NAME#v}"
           mv dist/Unified-Measurement-Tool.exe "dist/Unified-Measurement-Tool-${VERSION}-Windows.exe"
           echo "EXE_NAME=Unified-Measurement-Tool-${VERSION}-Windows.exe" >> "$GITHUB_ENV"
